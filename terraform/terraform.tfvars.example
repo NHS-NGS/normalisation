@@ -3,7 +3,7 @@
 
 input_bucket_name = "my-group-vcf-data"
 genome_ref_bucket = "my-group-reference-genomes"
-genome_ref_key    = "genomes/hg38/genome.fa"
+genome_ref_key    = "genomes/hg38/Homo_sapiens.GRCh38.dna.toplevel.fa.gz"  # .fa or .fa.gz
 
 # Optional overrides
 # project_name              = "vcf-normalisation"

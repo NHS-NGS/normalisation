@@ -16,7 +16,7 @@ Each of the 7 groups deploys the same Terraform module into their own AWS accoun
 - Terraform >= 1.5
 - Docker
 - An existing S3 bucket for VCF uploads (the "input bucket")
-- A reference genome (`.fa`) and its fasta index (`.fa.fai`) uploaded to an S3 bucket
+- A reference genome uploaded to an S3 bucket — either uncompressed (`.fa` + `.fa.fai`) or bgzipped (`.fa.gz` + `.fa.gz.fai` + `.fa.gz.gzi`)
 
 ## Deployment
 
@@ -34,10 +34,15 @@ Edit `terraform.tfvars` with your account-specific values:
 ```hcl
 input_bucket_name = "my-group-vcf-data"
 genome_ref_bucket = "my-group-reference-genomes"
-genome_ref_key    = "genomes/hg38/genome.fa"
+genome_ref_key    = "genomes/hg38/Homo_sapiens.GRCh38.dna.toplevel.fa.gz"
 ```
 
-The reference genome index must exist at `<genome_ref_key>.fai` in the same bucket (e.g. `genomes/hg38/genome.fa.fai`).
+The following index files must exist alongside the genome in the same bucket:
+
+- **Uncompressed genome** (`.fa`): requires `.fa.fai`
+- **Bgzipped genome** (`.fa.gz`): requires `.fa.gz.fai` and `.fa.gz.gzi`
+
+The pipeline detects the format from the file extension and downloads the appropriate indices automatically.
 
 ### Step 2 — Create the ECR repository
 
@@ -173,7 +178,7 @@ See `terraform/variables.tf` for all options. Key variables:
 |---|---|---|
 | `input_bucket_name` | S3 bucket for VCF uploads | (required) |
 | `genome_ref_bucket` | S3 bucket with reference genome | (required) |
-| `genome_ref_key` | S3 key for the `.fa` file | (required) |
+| `genome_ref_key` | S3 key for the genome (`.fa` or `.fa.gz`) | (required) |
 | `input_prefix` | S3 prefix that triggers Lambda | `input/` |
 | `output_prefix` | S3 prefix for normalised output | `output/` |
 | `lambda_memory_mb` | Lambda memory (MB) | 2048 |
