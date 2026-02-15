@@ -1,0 +1,19 @@
+# Account-specific configuration
+# Copy this file to terraform.tfvars and fill in the values.
+
+input_bucket_name = "my-group-vcf-data"
+genome_ref_bucket = "my-group-reference-genomes"
+genome_ref_key    = "genomes/hg38/genome.fa"
+
+# Optional overrides
+# project_name              = "vcf-normalisation"
+# input_prefix              = "input/"
+# output_prefix             = "output/"
+# lambda_memory_mb          = 2048
+# lambda_timeout            = 600
+# lambda_ephemeral_storage_mb = 4096
+# ecr_image_tag             = "latest"
+# tags = {
+#   Environment = "production"
+#   Team        = "genomics"
+# }
