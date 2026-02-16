@@ -1,8 +1,8 @@
 # Account-specific configuration
 # Copy this file to terraform.tfvars and fill in the values.
 
-input_bucket_name = "my-group-vcf-data"
-genome_ref_bucket = "my-group-reference-genomes"
+input_bucket_name = "my-vcf-data"
+genome_ref_bucket = "my-reference-genomes"
 genome_ref_key    = "genomes/hg38/Homo_sapiens.GRCh38.dna.toplevel.fa.gz"  # .fa or .fa.gz
 
 # Optional overrides
