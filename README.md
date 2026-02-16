@@ -40,8 +40,8 @@ cp terraform.tfvars.example terraform.tfvars
 Edit `terraform.tfvars` with your account-specific values:
 
 ```hcl
-input_bucket_name = "my-group-vcf-data"
-genome_ref_bucket = "my-group-reference-genomes"
+input_bucket_name = "my-vcf-data"
+genome_ref_bucket = "my-reference-genomes"
 genome_ref_key    = "genomes/hg38/Homo_sapiens.GRCh38.dna.toplevel.fa.gz"
 ```
 
@@ -128,17 +128,17 @@ terraform destroy
 Upload a compressed VCF to the `input/` prefix in your bucket. The Lambda triggers automatically:
 
 ```bash
-aws s3 cp sample.vcf.gz s3://my-group-vcf-data/input/sample.vcf.gz
+aws s3 cp sample.vcf.gz s3://my-vcf-data/input/sample.vcf.gz
 ```
 
 The normalised file appears at the `output/` prefix:
 
 ```bash
 # Check it arrived
-aws s3 ls s3://my-group-vcf-data/output/sample.vcf.gz
+aws s3 ls s3://my-vcf-data/output/sample.vcf.gz
 
 # Download it
-aws s3 cp s3://my-group-vcf-data/output/sample.vcf.gz normalised_sample.vcf.gz
+aws s3 cp s3://my-vcf-data/output/sample.vcf.gz normalised_sample.vcf.gz
 ```
 
 ### Manual — re-process a file
@@ -146,7 +146,7 @@ aws s3 cp s3://my-group-vcf-data/output/sample.vcf.gz normalised_sample.vcf.gz
 Use the helper script to re-invoke the Lambda for a specific file:
 
 ```bash
-./scripts/invoke.sh my-group-vcf-data input/sample.vcf.gz
+./scripts/invoke.sh my-vcf-data input/sample.vcf.gz
 ```
 
 Or invoke directly with the AWS CLI:
@@ -154,7 +154,7 @@ Or invoke directly with the AWS CLI:
 ```bash
 aws lambda invoke \
   --function-name "$FUNCTION_NAME" \
-  --payload '{"bucket": "my-group-vcf-data", "key": "input/sample.vcf.gz"}' \
+  --payload '{"bucket": "my-vcf-data", "key": "input/sample.vcf.gz"}' \
   --cli-binary-format raw-in-base64-out \
   /dev/stdout
 ```
@@ -213,7 +213,18 @@ Test data lives under separate S3 prefixes (`test/input/`, `test/expected/`), co
 
 #### Setup
 
-Upload test inputs and expected outputs to S3:
+1. Grant the Lambda access to the test prefixes by adding the following to `terraform.tfvars` and running `terraform apply`:
+
+```hcl
+extra_s3_prefixes = [
+  {
+    read_prefix  = "test/input/"
+    write_prefix = "test/output/"
+  }
+]
+```
+
+2. Upload test inputs and expected outputs to S3:
 
 ```bash
 aws s3 sync ./test_vcfs/ s3://my-vcf-data/test/input/
