@@ -146,11 +146,44 @@ class TestBcftoolsNorm:
 
 class TestUploadOutput:
     @patch("handler.s3")
-    def test_upload_key(self, mock_s3, tmp_path):
+    def test_standard_input_prefix(self, mock_s3, tmp_path):
         output_path = tmp_path / "normalised_sample.vcf.gz"
         output_path.touch()
 
         key = _upload_output("my-bucket", "input/sample.vcf.gz", output_path)
+        assert key == "output/sample.vcf.gz"
+        mock_s3.upload_file.assert_called_once_with(
+            str(output_path), "my-bucket", "output/sample.vcf.gz"
+        )
+
+    @patch("handler.s3")
+    def test_nested_input_prefix(self, mock_s3, tmp_path):
+        """test/input/sample.vcf.gz should produce test/output/sample.vcf.gz."""
+        output_path = tmp_path / "normalised_sample.vcf.gz"
+        output_path.touch()
+
+        key = _upload_output("my-bucket", "test/input/sample.vcf.gz", output_path)
+        assert key == "test/output/sample.vcf.gz"
+        mock_s3.upload_file.assert_called_once_with(
+            str(output_path), "my-bucket", "test/output/sample.vcf.gz"
+        )
+
+    @patch("handler.s3")
+    def test_multiple_input_segments_replaces_last(self, mock_s3, tmp_path):
+        """When multiple /input/ segments exist, only the last is replaced."""
+        output_path = tmp_path / "normalised_sample.vcf.gz"
+        output_path.touch()
+
+        key = _upload_output("my-bucket", "input/subdir/input/sample.vcf.gz", output_path)
+        assert key == "input/subdir/output/sample.vcf.gz"
+
+    @patch("handler.s3")
+    def test_no_input_segment_uses_output_prefix(self, mock_s3, tmp_path):
+        """Keys without /input/ fall back to OUTPUT_PREFIX."""
+        output_path = tmp_path / "normalised_sample.vcf.gz"
+        output_path.touch()
+
+        key = _upload_output("my-bucket", "uploads/sample.vcf.gz", output_path)
         assert key == "output/sample.vcf.gz"
         mock_s3.upload_file.assert_called_once_with(
             str(output_path), "my-bucket", "output/sample.vcf.gz"

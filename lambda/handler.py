@@ -151,9 +151,19 @@ def _run_bcftools_norm(input_path, genome_path):
 
 
 def _upload_output(bucket, input_key, output_path):
-    """Upload the normalised VCF to the output prefix in S3."""
-    filename = Path(input_key).name
-    output_key = f"{OUTPUT_PREFIX}{filename}"
+    """Upload the normalised VCF to S3, deriving the output path from the input key.
+
+    If the input key contains '/input/', the last occurrence is replaced with
+    '/output/' to mirror the directory structure. Otherwise falls back to
+    OUTPUT_PREFIX + filename.
+    """
+    if "/input/" in input_key:
+        # Replace the last occurrence of /input/ with /output/
+        idx = input_key.rfind("/input/")
+        output_key = input_key[:idx] + "/output/" + input_key[idx + len("/input/"):]
+    else:
+        filename = Path(input_key).name
+        output_key = f"{OUTPUT_PREFIX}{filename}"
 
     logger.info("Uploading output: %s -> s3://%s/%s", output_path, bucket, output_key)
     s3.upload_file(str(output_path), bucket, output_key)

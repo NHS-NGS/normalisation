@@ -190,8 +190,46 @@ See `terraform/variables.tf` for all options. Key variables:
 
 ## Testing
 
+### Unit tests
+
 ```bash
 pytest tests/
+```
+
+### Integration tests
+
+The integration test script invokes the Lambda on 100 test VCFs stored in S3 and compares outputs against pre-normalised expected files using `bcftools isec`.
+
+Test data lives under separate S3 prefixes (`test/input/`, `test/expected/`), completely separate from the production `input/` → `output/` flow.
+
+#### Setup
+
+Upload test inputs and expected outputs to S3:
+
+```bash
+aws s3 sync ./test_vcfs/ s3://my-vcf-data/test/input/
+aws s3 sync ./expected_vcfs/ s3://my-vcf-data/test/expected/
+```
+
+#### Running
+
+```bash
+./scripts/integration_test.sh <bucket> [input_prefix] [expected_prefix]
+```
+
+| Parameter | Source | Default |
+|---|---|---|
+| `BUCKET` | Arg 1 | (required) |
+| `INPUT_PREFIX` | Arg 2 | `test/input/` |
+| `EXPECTED_PREFIX` | Arg 3 | `test/expected/` |
+| `FUNCTION_NAME` | Env var | `vcf-normalisation` |
+| `MAX_PARALLEL` | Env var | `10` |
+| `POLL_TIMEOUT` | Env var | `120` (seconds per file) |
+
+Example:
+
+```bash
+FUNCTION_NAME=my-vcf-lambda MAX_PARALLEL=20 ./scripts/integration_test.sh my-vcf-data
 ```
 
 ## Normalisation command
