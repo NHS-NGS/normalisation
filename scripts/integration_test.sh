@@ -46,6 +46,11 @@ fi
 
 echo "Found ${#FILES[@]} test VCFs in s3://${BUCKET}/${INPUT_PREFIX}"
 
+# ── Clean previous outputs ───────────────────────────────────────────────────
+
+echo "Cleaning previous outputs in s3://${BUCKET}/${OUTPUT_PREFIX}..."
+aws s3 rm "s3://${BUCKET}/${OUTPUT_PREFIX}" --recursive > /dev/null 2>&1 || true
+
 # ── Invoke Lambda for each file ─────────────────────────────────────────────
 
 echo "Invoking Lambda for ${#FILES[@]} files (max ${MAX_PARALLEL} parallel)..."
