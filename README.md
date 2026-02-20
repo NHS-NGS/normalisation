@@ -331,3 +331,7 @@ bcftools norm -f genome.fa -m -any --keep-sum AD input.vcf.gz -o output.vcf.gz
 - `-m -any` — split multiallelic sites into biallelic records
 - `--keep-sum AD` — maintain the allelic depth sum when splitting
 - `-f genome.fa` — left-align and normalise indels against the reference
+
+## Further reading
+
+See [technical_walkthrough.md](technical_walkthrough.md) for a detailed walkthrough of the codebase including the handler source, Dockerfile, Terraform resources, and test output.
