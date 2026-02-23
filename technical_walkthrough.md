@@ -3,7 +3,7 @@
 *2026-02-19T22:40:27Z by Showboat 0.6.0*
 <!-- showboat-id: ee047990-1b34-4542-b149-b846ac76e849 -->
 
-A serverless pipeline that normalises VCF files using `bcftools norm`. An S3 upload to the `input/` prefix triggers a Lambda function (packaged as a container image with bcftools), which left-aligns indels, splits multiallelic sites, and preserves allelic depth sums. The normalised VCF is written to the `output/` prefix in the same bucket. The same Terraform module is deployed across 7 AWS accounts.
+A serverless pipeline that normalises VCF files using `bcftools norm`. An S3 upload to the `input/` prefix triggers a Lambda function (packaged as a container image with bcftools), which left-aligns indels, splits multiallelic sites, and preserves allelic depth sums. Both gzipped (`.vcf.gz`) and uncompressed (`.vcf`) inputs are accepted; output is always bgzipped. The normalised VCF is written to the `output/` prefix in the same bucket. The same Terraform module is deployed across 7 AWS accounts.
 
 ## Project Structure
 
@@ -33,6 +33,9 @@ terraform/variables.tf
 ## Lambda Handler
 
 The core normalisation logic lives in `lambda/handler.py`. It downloads the input VCF and reference genome from S3, runs `bcftools norm`, and uploads the result. The output path is derived by replacing the last `/input/` segment with `/output/`.
+
+<details>
+<summary><code>cat lambda/handler.py</code></summary>
 
 ```bash
 cat lambda/handler.py
@@ -159,12 +162,20 @@ def _download_genome():
 
 
 def _run_bcftools_norm(input_path, genome_path):
-    """Run bcftools norm and return the path to the output file."""
-    output_path = WORK_DIR / f"normalised_{input_path.name}"
+    """Run bcftools norm and return the path to the output file.
+
+    Output is always bgzipped (.vcf.gz) regardless of whether the input was
+    compressed or uncompressed.
+    """
+    output_name = input_path.name
+    if output_name.endswith(".vcf"):
+        output_name = output_name[:-4] + ".vcf.gz"
+    output_path = WORK_DIR / f"normalised_{output_name}"
 
     cmd = [
         "bcftools",
         "norm",
+        "-Oz",
         "-f",
         str(genome_path),
         "-m",
@@ -207,6 +218,10 @@ def _upload_output(bucket, input_key, output_path):
         filename = Path(input_key).name
         output_key = f"{OUTPUT_PREFIX}{filename}"
 
+    # Output is always bgzipped; fix the extension if the input was uncompressed
+    if output_key.endswith(".vcf"):
+        output_key = output_key[:-4] + ".vcf.gz"
+
     logger.info("Uploading output: %s -> s3://%s/%s", output_path, bucket, output_key)
     s3.upload_file(str(output_path), bucket, output_key)
     return output_key
@@ -218,9 +233,14 @@ def _cleanup():
         shutil.rmtree(WORK_DIR, ignore_errors=True)
 ```
 
+</details>
+
 ## Container Image
 
 The Lambda runs as a container image built on Amazon Linux with bcftools and htslib compiled from source.
+
+<details>
+<summary><code>cat Dockerfile</code></summary>
 
 ```bash
 cat Dockerfile
@@ -276,9 +296,12 @@ COPY lambda/handler.py ${LAMBDA_TASK_ROOT}/handler.py
 CMD ["handler.lambda_handler"]
 ```
 
+</details>
+
 ## Normalisation Command
 
 The pipeline runs the following bcftools command:
+- `-Oz` — write bgzipped output (output is always `.vcf.gz` regardless of input format)
 - `-m -any` — split multiallelic sites into biallelic records
 - `--keep-sum AD` — maintain the allelic depth sum when splitting
 - `-f genome.fa` — left-align and normalise indels against the reference
@@ -291,6 +314,7 @@ sed -n '/cmd = \[/,/\]/p' lambda/handler.py
     cmd = [
         "bcftools",
         "norm",
+        "-Oz",
         "-f",
         str(genome_path),
         "-m",
@@ -307,6 +331,9 @@ sed -n '/cmd = \[/,/\]/p' lambda/handler.py
 
 The test suite validates the handler logic using mocked S3 and subprocess calls.
 
+<details>
+<summary><code>pytest tests/ -v</code></summary>
+
 ```bash
 pytest tests/ -v
 ```
@@ -317,25 +344,30 @@ platform linux -- Python 3.10.19, pytest-9.0.2, pluggy-1.5.0 -- /usr/bin/python3
 cachedir: .pytest_cache
 rootdir: /home/wook/Documents/normalisation
 plugins: anyio-4.6.2.post1
-collecting ... collected 14 items
+collecting ... collected 17 items
 
-tests/test_handler.py::TestParseEvent::test_s3_event PASSED              [  7%]
-tests/test_handler.py::TestParseEvent::test_s3_event_url_encoded_key PASSED [ 14%]
-tests/test_handler.py::TestParseEvent::test_manual_event PASSED          [ 21%]
-tests/test_handler.py::TestParseEvent::test_missing_fields_raises PASSED [ 28%]
-tests/test_handler.py::TestDownloadGenome::test_uncompressed_genome PASSED [ 35%]
-tests/test_handler.py::TestDownloadGenome::test_bgzipped_genome_downloads_gzi PASSED [ 42%]
-tests/test_handler.py::TestBcftoolsNorm::test_success PASSED             [ 50%]
-tests/test_handler.py::TestBcftoolsNorm::test_failure_raises PASSED      [ 57%]
-tests/test_handler.py::TestUploadOutput::test_standard_input_prefix PASSED [ 64%]
-tests/test_handler.py::TestUploadOutput::test_nested_input_prefix PASSED [ 71%]
-tests/test_handler.py::TestUploadOutput::test_multiple_input_segments_replaces_last PASSED [ 78%]
-tests/test_handler.py::TestUploadOutput::test_no_input_segment_uses_output_prefix PASSED [ 85%]
-tests/test_handler.py::TestLambdaHandler::test_full_flow PASSED          [ 92%]
+tests/test_handler.py::TestParseEvent::test_s3_event PASSED              [  5%]
+tests/test_handler.py::TestParseEvent::test_s3_event_url_encoded_key PASSED [ 11%]
+tests/test_handler.py::TestParseEvent::test_manual_event PASSED          [ 17%]
+tests/test_handler.py::TestParseEvent::test_missing_fields_raises PASSED [ 23%]
+tests/test_handler.py::TestDownloadGenome::test_uncompressed_genome PASSED [ 29%]
+tests/test_handler.py::TestDownloadGenome::test_bgzipped_genome_downloads_gzi PASSED [ 35%]
+tests/test_handler.py::TestBcftoolsNorm::test_success_gzipped PASSED     [ 41%]
+tests/test_handler.py::TestBcftoolsNorm::test_success_uncompressed PASSED [ 47%]
+tests/test_handler.py::TestBcftoolsNorm::test_failure_raises PASSED      [ 52%]
+tests/test_handler.py::TestUploadOutput::test_standard_input_prefix PASSED [ 58%]
+tests/test_handler.py::TestUploadOutput::test_nested_input_prefix PASSED [ 64%]
+tests/test_handler.py::TestUploadOutput::test_multiple_input_segments_replaces_last PASSED [ 70%]
+tests/test_handler.py::TestUploadOutput::test_no_input_segment_uses_output_prefix PASSED [ 76%]
+tests/test_handler.py::TestUploadOutput::test_uncompressed_input_key_becomes_gz PASSED [ 82%]
+tests/test_handler.py::TestUploadOutput::test_uncompressed_no_input_segment_becomes_gz PASSED [ 88%]
+tests/test_handler.py::TestLambdaHandler::test_full_flow PASSED          [ 94%]
 tests/test_handler.py::TestLambdaHandler::test_cleanup_on_error PASSED   [100%]
 
-============================== 14 passed in 0.22s ==============================
+============================== 17 passed in 0.22s ==============================
 ```
+
+</details>
 
 ## Integration Tests
 
@@ -416,8 +448,85 @@ resource "aws_lambda_permission" "s3" {
 resource "aws_s3_bucket_notification" "input" {
 ```
 
-## Architecture Diagram
+## Input Format Support
 
-    S3 (input/)  →  S3 Event Notification  →  Lambda (bcftools container)  →  S3 (output/)
+The pipeline accepts both gzipped (`.vcf.gz`) and uncompressed (`.vcf`) VCF files. Two changes enable this.
 
-The Lambda downloads the reference genome from a separate S3 bucket at runtime. Each of the 7 groups deploys the same Terraform module into their own AWS account with account-specific terraform.tfvars.
+**S3 trigger** — the Terraform notification resource registers two filter blocks, one per suffix, so uploads of either format fire the Lambda:
+
+```bash
+grep -A 18 "aws_s3_bucket_notification" terraform/main.tf
+```
+
+```output
+resource "aws_s3_bucket_notification" "input" {
+  bucket = data.aws_s3_bucket.input.id
+
+  lambda_function {
+    lambda_function_arn = aws_lambda_function.normalise.arn
+    events              = ["s3:ObjectCreated:*"]
+    filter_prefix       = var.input_prefix
+    filter_suffix       = ".vcf.gz"
+  }
+
+  lambda_function {
+    lambda_function_arn = aws_lambda_function.normalise.arn
+    events              = ["s3:ObjectCreated:*"]
+    filter_prefix       = var.input_prefix
+    filter_suffix       = ".vcf"
+  }
+
+  depends_on = [aws_lambda_permission.s3]
+}
+```
+
+**Handler — normalisation and output key** — `_run_bcftools_norm` renames the local output file to `.vcf.gz` when the input was `.vcf`, and passes `-Oz` so bcftools writes bgzipped content. `_upload_output` then ensures the S3 key always ends in `.vcf.gz`:
+
+```bash
+grep -A 5 "output_name.endswith" lambda/handler.py
+```
+
+```output
+    if output_name.endswith(".vcf"):
+        output_name = output_name[:-4] + ".vcf.gz"
+    output_path = WORK_DIR / f"normalised_{output_name}"
+
+    cmd = [
+        "bcftools",
+```
+
+```bash
+grep -A 2 "Output is always bgzipped" lambda/handler.py
+```
+
+```output
+    Output is always bgzipped (.vcf.gz) regardless of whether the input was
+    compressed or uncompressed.
+    """
+--
+    # Output is always bgzipped; fix the extension if the input was uncompressed
+    if output_key.endswith(".vcf"):
+        output_key = output_key[:-4] + ".vcf.gz"
+```
+
+The test suite covers both input formats end-to-end, verifying that an uncompressed input produces a `.vcf.gz` output path and that the `-Oz` flag is always present in the bcftools command:
+
+```bash
+pytest tests/ -v -k "uncompressed"
+```
+
+```output
+============================= test session starts ==============================
+platform linux -- Python 3.10.19, pytest-9.0.2, pluggy-1.5.0 -- /usr/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/wook/Documents/normalisation
+plugins: anyio-4.6.2.post1
+collecting ... collected 17 items / 13 deselected / 4 selected
+
+tests/test_handler.py::TestDownloadGenome::test_uncompressed_genome PASSED [ 25%]
+tests/test_handler.py::TestBcftoolsNorm::test_success_uncompressed PASSED [ 50%]
+tests/test_handler.py::TestUploadOutput::test_uncompressed_input_key_becomes_gz PASSED [ 75%]
+tests/test_handler.py::TestUploadOutput::test_uncompressed_no_input_segment_becomes_gz PASSED [100%]
+
+======================= 4 passed, 13 deselected in 0.22s =======================
+```
