@@ -13,11 +13,12 @@ provider "aws" {
   region = "eu-west-2"
 }
 
-data "aws_caller_identity" "current" {}
-data "aws_region" "current" {}
+data "aws_s3_bucket" "input" {
+  bucket = var.input_bucket_name
+}
 
 # ---------------------------------------------------------------------------
-# ECR Repository
+# ECR Repository — shared across all genome configs (same container image)
 # ---------------------------------------------------------------------------
 
 resource "aws_ecr_repository" "this" {
@@ -52,140 +53,56 @@ resource "aws_ecr_lifecycle_policy" "this" {
 }
 
 # ---------------------------------------------------------------------------
-# IAM Role for Lambda
+# One Lambda + IAM role per genome config
 # ---------------------------------------------------------------------------
 
-resource "aws_iam_role" "lambda" {
-  name = "${var.project_name}-lambda"
+module "normaliser" {
+  for_each = { for cfg in var.genome_configs : cfg.name => cfg }
 
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = {
-        Service = "lambda.amazonaws.com"
-      }
-    }]
-  })
+  source = "./modules/vcf_normaliser"
 
-  tags = var.tags
-}
-
-resource "aws_iam_role_policy_attachment" "lambda_basic" {
-  role       = aws_iam_role.lambda.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
-resource "aws_iam_role_policy" "lambda_s3" {
-  name = "${var.project_name}-s3-access"
-  role = aws_iam_role.lambda.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "ReadInputBucket"
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-        ]
-        Resource = concat(
-          ["${data.aws_s3_bucket.input.arn}/${var.input_prefix}*"],
-          [for p in var.extra_s3_prefixes : "${data.aws_s3_bucket.input.arn}/${p.read_prefix}*"],
-        )
-      },
-      {
-        Sid    = "WriteOutputBucket"
-        Effect = "Allow"
-        Action = [
-          "s3:PutObject",
-        ]
-        Resource = concat(
-          ["${data.aws_s3_bucket.input.arn}/${var.output_prefix}*"],
-          [for p in var.extra_s3_prefixes : "${data.aws_s3_bucket.input.arn}/${p.write_prefix}*"],
-        )
-      },
-      {
-        Sid    = "ReadGenomeRef"
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-        ]
-        Resource = [
-          "arn:aws:s3:::${var.genome_ref_bucket}/${var.genome_ref_key}",
-          "arn:aws:s3:::${var.genome_ref_bucket}/${var.genome_ref_key}.fai",
-          "arn:aws:s3:::${var.genome_ref_bucket}/${var.genome_ref_key}.gzi",
-        ]
-      },
-    ]
-  })
+  project_name                = var.project_name
+  name                        = each.value.name
+  input_bucket_arn            = data.aws_s3_bucket.input.arn
+  input_prefix                = each.value.input_prefix
+  output_prefix               = each.value.output_prefix
+  genome_ref_bucket           = each.value.genome_ref_bucket
+  genome_ref_key              = each.value.genome_ref_key
+  lambda_memory_mb            = var.lambda_memory_mb
+  lambda_timeout              = var.lambda_timeout
+  lambda_ephemeral_storage_mb = var.lambda_ephemeral_storage_mb
+  ecr_image_uri               = "${aws_ecr_repository.this.repository_url}:${var.ecr_image_tag}"
+  extra_s3_prefixes           = each.value.extra_s3_prefixes
+  tags                        = var.tags
 }
 
 # ---------------------------------------------------------------------------
-# S3 Bucket (data source — bucket must already exist)
+# S3 Event Notification — single resource covers all genome configs
+# S3 only permits one aws_s3_bucket_notification per bucket; dynamic blocks
+# generate one trigger block per (genome_config × file_suffix) combination.
 # ---------------------------------------------------------------------------
-
-data "aws_s3_bucket" "input" {
-  bucket = var.input_bucket_name
-}
-
-# ---------------------------------------------------------------------------
-# Lambda Function
-# ---------------------------------------------------------------------------
-
-resource "aws_lambda_function" "normalise" {
-  function_name = var.project_name
-  role          = aws_iam_role.lambda.arn
-  package_type  = "Image"
-  image_uri     = "${aws_ecr_repository.this.repository_url}:${var.ecr_image_tag}"
-  timeout       = var.lambda_timeout
-  memory_size   = var.lambda_memory_mb
-
-  ephemeral_storage {
-    size = var.lambda_ephemeral_storage_mb
-  }
-
-  environment {
-    variables = {
-      GENOME_REF_BUCKET = var.genome_ref_bucket
-      GENOME_REF_KEY    = var.genome_ref_key
-      OUTPUT_PREFIX     = var.output_prefix
-    }
-  }
-
-  tags = var.tags
-}
-
-# ---------------------------------------------------------------------------
-# S3 Event Notification → Lambda
-# ---------------------------------------------------------------------------
-
-resource "aws_lambda_permission" "s3" {
-  statement_id  = "AllowS3Invoke"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.normalise.function_name
-  principal     = "s3.amazonaws.com"
-  source_arn    = data.aws_s3_bucket.input.arn
-  source_account = data.aws_caller_identity.current.account_id
-}
 
 resource "aws_s3_bucket_notification" "input" {
   bucket = data.aws_s3_bucket.input.id
 
-  lambda_function {
-    lambda_function_arn = aws_lambda_function.normalise.arn
-    events              = ["s3:ObjectCreated:*"]
-    filter_prefix       = var.input_prefix
-    filter_suffix       = ".vcf.gz"
+  dynamic "lambda_function" {
+    for_each = {
+      for pair in flatten([
+        for cfg in var.genome_configs : [
+          { key = "${cfg.name}-vcfgz", name = cfg.name, prefix = cfg.input_prefix, suffix = ".vcf.gz" },
+          { key = "${cfg.name}-vcf",   name = cfg.name, prefix = cfg.input_prefix, suffix = ".vcf" },
+        ]
+      ]) : pair.key => pair
+    }
+
+    content {
+      lambda_function_arn = module.normaliser[lambda_function.value.name].lambda_function_arn
+      events              = ["s3:ObjectCreated:*"]
+      filter_prefix       = lambda_function.value.prefix
+      filter_suffix       = lambda_function.value.suffix
+    }
   }
 
-  lambda_function {
-    lambda_function_arn = aws_lambda_function.normalise.arn
-    events              = ["s3:ObjectCreated:*"]
-    filter_prefix       = var.input_prefix
-    filter_suffix       = ".vcf"
-  }
-
-  depends_on = [aws_lambda_permission.s3]
+  # Lambda permissions must exist before S3 can register the notification
+  depends_on = [module.normaliser]
 }

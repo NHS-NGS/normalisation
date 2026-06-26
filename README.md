@@ -5,10 +5,10 @@ Serverless pipeline that normalises VCF files using `bcftools norm`. Deployed as
 ## Architecture
 
 ```text
-S3 (input/)  →  S3 Event Notification  →  Lambda (bcftools container)  →  S3 (output/)
+S3 (input/<genome>/)  →  S3 Event Notification  →  Lambda (bcftools container)  →  S3 (output/<genome>/)
 ```
 
-Each of the 7 groups deploys the same Terraform module into their own AWS account.
+Each of the 7 groups deploys the same Terraform module into their own AWS account. A single deployment can serve **multiple reference genomes** — each genome gets its own Lambda function and IAM role, all sharing one ECR repository and one S3 bucket notification.
 
 ## Prerequisites
 
@@ -37,15 +37,25 @@ cd terraform
 cp terraform.tfvars.example terraform.tfvars
 ```
 
-Edit `terraform.tfvars` with your account-specific values:
+Edit `terraform.tfvars` with your account-specific values. The `genome_configs` list contains one entry per reference genome. Single-genome accounts supply one entry; add more entries to enable additional genomes:
 
 ```hcl
 input_bucket_name = "my-vcf-data"
-genome_ref_bucket = "my-reference-genomes"
-genome_ref_key    = "genomes/hg38/Homo_sapiens.GRCh38.dna.toplevel.fa.gz"
+
+genome_configs = [
+  {
+    name              = "grch38"
+    input_prefix      = "input/grch38/"
+    output_prefix     = "output/grch38/"
+    genome_ref_bucket = "my-reference-genomes"
+    genome_ref_key    = "genomes/GRCh38/genome.fa.gz"
+  },
+]
 ```
 
-The following index files must exist alongside the genome in the same bucket:
+Each entry creates a separate Lambda function named `<project_name>-<name>` (e.g. `vcf-normalisation-grch38`). The `name` field is a short identifier used in resource names — it can be any unique string (e.g. `grch38`, `hg19`, `grch37`).
+
+The following index files must exist alongside each genome in the same bucket:
 
 - **Uncompressed genome** (`.fa`): requires `.fa.fai`
 - **Bgzipped genome** (`.fa.gz`): requires `.fa.gz.fai` and `.fa.gz.gzi`
@@ -96,7 +106,7 @@ cd terraform
 terraform apply
 ```
 
-This creates the Lambda function, IAM roles, and S3 event notification using the image you just pushed.
+This creates one Lambda function and IAM role per `genome_configs` entry, plus the shared S3 event notification.
 
 ### Updating the Lambda
 
@@ -107,23 +117,24 @@ sudo docker build -t vcf-normalisation .
 sudo docker tag vcf-normalisation:latest "$ECR_REPO:latest"
 sudo docker push "$ECR_REPO:latest"
 
-# Force Lambda to pick up the new image
-FUNCTION_NAME=$(cd terraform && terraform output -raw lambda_function_name)
-aws lambda update-function-code \
-  --function-name "$FUNCTION_NAME" \
-  --image-uri "$ECR_REPO:latest"
+# Force all genome Lambdas to pick up the new image
+terraform output -json lambda_function_names \
+  | jq -r '.[]' \
+  | xargs -I{} aws lambda update-function-code \
+      --function-name {} \
+      --image-uri "$ECR_REPO:latest"
 ```
 
 #### Updating from a different machine
 
-If you are running these steps on a machine that has no local Terraform state (e.g. a fresh clone), Terraform will not know about the existing resources and `terraform apply` will fail. Import the resources that already exist in AWS before applying:
+If you are running these steps on a machine that has no local Terraform state (e.g. a fresh clone), import the existing resources before applying. The resources are now keyed by genome name, so substitute `<name>` with your `genome_configs` entry name (e.g. `grch38`):
 
 ```bash
 cd terraform
 terraform import aws_ecr_repository.this vcf-normalisation
-terraform import aws_iam_role.lambda vcf-normalisation-lambda
-terraform import aws_lambda_function.normalise vcf-normalisation
-terraform import aws_lambda_permission.s3 vcf-normalisation/AllowS3Invoke
+terraform import 'module.normaliser["<name>"].aws_iam_role.lambda' vcf-normalisation-<name>-lambda
+terraform import 'module.normaliser["<name>"].aws_lambda_function.normalise' vcf-normalisation-<name>
+terraform import 'module.normaliser["<name>"].aws_lambda_permission.s3' vcf-normalisation-<name>/AllowS3Invoke
 ```
 
 Replace `vcf-normalisation` with your `project_name` if you changed the default. After importing, run `terraform apply` as normal.
@@ -139,61 +150,53 @@ terraform destroy
 
 ### Automatic — upload a file
 
-Upload a VCF to the `input/` prefix in your bucket. Both gzipped (`.vcf.gz`) and uncompressed (`.vcf`) inputs are accepted. The Lambda triggers automatically:
+Upload a VCF to the genome-specific `input/` prefix in your bucket. Both gzipped (`.vcf.gz`) and uncompressed (`.vcf`) inputs are accepted. The Lambda triggers automatically:
 
 ```bash
-aws s3 cp sample.vcf.gz s3://my-vcf-data/input/sample.vcf.gz
-# or
-aws s3 cp sample.vcf s3://my-vcf-data/input/sample.vcf
+aws s3 cp sample.vcf.gz s3://my-vcf-data/input/grch38/sample.vcf.gz
 ```
 
-The normalised file appears at the `output/` prefix. Output is always bgzipped (`.vcf.gz`), regardless of whether the input was compressed:
+The normalised file appears under the corresponding `output/` prefix. Output is always bgzipped (`.vcf.gz`), regardless of whether the input was compressed:
 
 ```bash
 # Check it arrived
-aws s3 ls s3://my-vcf-data/output/sample.vcf.gz
+aws s3 ls s3://my-vcf-data/output/grch38/sample.vcf.gz
 
 # Download it
-aws s3 cp s3://my-vcf-data/output/sample.vcf.gz normalised_sample.vcf.gz
+aws s3 cp s3://my-vcf-data/output/grch38/sample.vcf.gz normalised_sample.vcf.gz
 ```
 
 ### Manual — re-process a file
 
-Use the helper script to re-invoke the Lambda for a specific file:
+Use the helper script to re-invoke a specific Lambda. The `FUNCTION_NAME` env var selects which genome's Lambda to use (defaults to `vcf-normalisation`):
 
 ```bash
-./scripts/invoke.sh my-vcf-data input/sample.vcf.gz
+FUNCTION_NAME=vcf-normalisation-grch38 ./scripts/invoke.sh my-vcf-data input/grch38/sample.vcf.gz
 ```
 
 Or invoke directly with the AWS CLI:
 
 ```bash
 aws lambda invoke \
-  --function-name "$FUNCTION_NAME" \
-  --payload '{"bucket": "my-vcf-data", "key": "input/sample.vcf.gz"}' \
+  --function-name vcf-normalisation-grch38 \
+  --payload '{"bucket": "my-vcf-data", "key": "input/grch38/sample.vcf.gz"}' \
   --cli-binary-format raw-in-base64-out \
   /dev/stdout
 ```
 
 ### Monitoring
 
-Set the function name from Terraform output (or use the `FUNCTION_NAME` env var from earlier steps):
+List all Lambda function names from the Terraform output:
 
 ```bash
-FUNCTION_NAME=$(cd terraform && terraform output -raw lambda_function_name)
+terraform -chdir=terraform output -json lambda_function_names
+# {"grch38": "vcf-normalisation-grch38", "hg19": "vcf-normalisation-hg19"}
 ```
 
 View Lambda logs in CloudWatch:
 
 ```bash
-aws logs tail "/aws/lambda/$FUNCTION_NAME" --follow
-```
-
-Check for invocation errors:
-
-```bash
-aws lambda get-function --function-name "$FUNCTION_NAME" \
-  --query 'Configuration.{State:State,LastModified:LastModified}'
+aws logs tail "/aws/lambda/vcf-normalisation-grch38" --follow
 ```
 
 ## Configuration
@@ -203,15 +206,22 @@ See `terraform/variables.tf` for all options. Key variables:
 | Variable | Description | Default |
 |---|---|---|
 | `input_bucket_name` | S3 bucket for VCF uploads | (required) |
-| `genome_ref_bucket` | S3 bucket with reference genome | (required) |
-| `genome_ref_key` | S3 key for the genome (`.fa` or `.fa.gz`) | (required) |
-| `input_prefix` | S3 prefix that triggers Lambda | `input/` |
-| `output_prefix` | S3 prefix for normalised output | `output/` |
-| `lambda_memory_mb` | Lambda memory (MB) | 2048 |
-| `lambda_timeout` | Lambda timeout (seconds) | 600 |
-| `lambda_ephemeral_storage_mb` | Ephemeral `/tmp` storage (MB) | 4096 |
+| `genome_configs` | List of genome/prefix configurations (see below) | (required) |
+| `lambda_memory_mb` | Lambda memory (MB) — applies to all Lambdas | 2048 |
+| `lambda_timeout` | Lambda timeout (seconds) — applies to all Lambdas | 600 |
+| `lambda_ephemeral_storage_mb` | Ephemeral `/tmp` storage (MB) — applies to all Lambdas | 4096 |
 | `ecr_image_tag` | Container image tag to deploy | `latest` |
-| `extra_s3_prefixes` | Extra read/write S3 prefix pairs for Lambda (e.g. testing) | `[]` |
+
+### `genome_configs` fields
+
+| Field | Description |
+|---|---|
+| `name` | Short identifier used in resource names (e.g. `grch38`, `hg19`) — must be unique |
+| `input_prefix` | S3 prefix to watch for incoming VCFs (must end with `/`) |
+| `output_prefix` | S3 prefix where normalised VCFs are written (must end with `/`) |
+| `genome_ref_bucket` | S3 bucket containing the reference FASTA |
+| `genome_ref_key` | S3 key for the FASTA (`.fai` must be at `<key>.fai`) |
+| `extra_s3_prefixes` | Optional list of `{read_prefix, write_prefix}` pairs (e.g. for integration testing) |
 
 ## Testing
 
@@ -259,14 +269,23 @@ AWS CLI v2 must be installed separately — see the [AWS CLI installation guide]
 
 #### Setup
 
-1. Grant the Lambda access to the test prefixes by adding the following to `terraform.tfvars` and running `terraform apply`:
+1. Grant the Lambda access to the test prefixes by adding `extra_s3_prefixes` to the relevant entry in `genome_configs` and running `terraform apply`:
 
 ```hcl
-extra_s3_prefixes = [
+genome_configs = [
   {
-    read_prefix  = "test/input/"
-    write_prefix = "test/output/"
-  }
+    name              = "grch38"
+    input_prefix      = "input/grch38/"
+    output_prefix     = "output/grch38/"
+    genome_ref_bucket = "my-reference-genomes"
+    genome_ref_key    = "genomes/GRCh38/genome.fa.gz"
+    extra_s3_prefixes = [
+      {
+        read_prefix  = "test/input/"
+        write_prefix = "test/output/"
+      }
+    ]
+  },
 ]
 ```
 
@@ -280,7 +299,7 @@ aws s3 sync ./expected_vcfs/ s3://my-vcf-data/test/expected/
 #### Running
 
 ```bash
-./scripts/integration_test.sh <bucket> [input_prefix] [expected_prefix]
+FUNCTION_NAME=vcf-normalisation-grch38 ./scripts/integration_test.sh <bucket> [input_prefix] [expected_prefix]
 ```
 
 | Parameter | Source | Default |
@@ -296,7 +315,7 @@ aws s3 sync ./expected_vcfs/ s3://my-vcf-data/test/expected/
 Example:
 
 ```bash
-MAX_PARALLEL=20 ./scripts/integration_test.sh my-vcf-data
+MAX_PARALLEL=20 FUNCTION_NAME=vcf-normalisation-grch38 ./scripts/integration_test.sh my-vcf-data
 ```
 
 ## AWS permissions
@@ -309,8 +328,8 @@ The user or CI role running `terraform apply` and pushing the container image ne
 |---------|-------------|--------|
 | ECR | `ecr:CreateRepository`, `ecr:DeleteRepository`, `ecr:PutLifecyclePolicy`, `ecr:DescribeRepositories`, `ecr:ListTagsForResource`, `ecr:TagResource` | Create and manage the container repository |
 | ECR (image push) | `ecr:GetAuthorizationToken`, `ecr:BatchCheckLayerAvailability`, `ecr:PutImage`, `ecr:InitiateLayerUpload`, `ecr:UploadLayerPart`, `ecr:CompleteLayerUpload` | Authenticate Docker and push images |
-| Lambda | `lambda:CreateFunction`, `lambda:UpdateFunctionCode`, `lambda:UpdateFunctionConfiguration`, `lambda:DeleteFunction`, `lambda:GetFunction`, `lambda:AddPermission`, `lambda:RemovePermission`, `lambda:TagResource`, `lambda:ListTags` | Create and update the Lambda function |
-| IAM | `iam:CreateRole`, `iam:DeleteRole`, `iam:AttachRolePolicy`, `iam:DetachRolePolicy`, `iam:PutRolePolicy`, `iam:DeleteRolePolicy`, `iam:GetRole`, `iam:GetRolePolicy`, `iam:PassRole`, `iam:ListRolePolicies`, `iam:ListAttachedRolePolicies`, `iam:ListInstanceProfilesForRole`, `iam:TagRole` | Manage the Lambda execution role |
+| Lambda | `lambda:CreateFunction`, `lambda:UpdateFunctionCode`, `lambda:UpdateFunctionConfiguration`, `lambda:DeleteFunction`, `lambda:GetFunction`, `lambda:AddPermission`, `lambda:RemovePermission`, `lambda:TagResource`, `lambda:ListTags` | Create and update Lambda functions |
+| IAM | `iam:CreateRole`, `iam:DeleteRole`, `iam:AttachRolePolicy`, `iam:DetachRolePolicy`, `iam:PutRolePolicy`, `iam:DeleteRolePolicy`, `iam:GetRole`, `iam:GetRolePolicy`, `iam:PassRole`, `iam:ListRolePolicies`, `iam:ListAttachedRolePolicies`, `iam:ListInstanceProfilesForRole`, `iam:TagRole` | Manage Lambda execution roles |
 | S3 | `s3:GetBucketNotification`, `s3:PutBucketNotification` | Configure the S3 event trigger |
 | S3 (data source) | `s3:ListBucket`, `s3:GetBucketLocation` | Terraform data source to reference the existing bucket |
 | STS | `sts:GetCallerIdentity` | Terraform uses this to determine the account ID |
@@ -321,8 +340,8 @@ Users who upload VCFs or manually invoke the Lambda need:
 
 | Service | Permissions | Reason |
 |---------|-------------|--------|
-| S3 | `s3:PutObject` on `input/*` | Upload input VCFs |
-| S3 | `s3:GetObject` on `output/*` | Download normalised results |
+| S3 | `s3:PutObject` on `input/<genome>/*` | Upload input VCFs |
+| S3 | `s3:GetObject` on `output/<genome>/*` | Download normalised results |
 | S3 | `s3:ListBucket` | List objects in input/output prefixes |
 | Lambda | `lambda:InvokeFunction` | Manual invocation via `invoke.sh` or AWS CLI |
 | CloudWatch Logs | `logs:FilterLogEvents`, `logs:GetLogEvents` | View Lambda logs for monitoring |

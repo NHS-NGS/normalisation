@@ -3,7 +3,7 @@
 *2026-02-19T22:40:27Z by Showboat 0.6.0*
 <!-- showboat-id: ee047990-1b34-4542-b149-b846ac76e849 -->
 
-A serverless pipeline that normalises VCF files using `bcftools norm`. An S3 upload to the `input/` prefix triggers a Lambda function (packaged as a container image with bcftools), which left-aligns indels, splits multiallelic sites, and preserves allelic depth sums. Both gzipped (`.vcf.gz`) and uncompressed (`.vcf`) inputs are accepted; output is always bgzipped. The normalised VCF is written to the `output/` prefix in the same bucket. The same Terraform module is deployed across 7 AWS accounts.
+A serverless pipeline that normalises VCF files using `bcftools norm`. An S3 upload to a genome-specific `input/<genome>/` prefix triggers a Lambda function (packaged as a container image with bcftools), which left-aligns indels, splits multiallelic sites, and preserves allelic depth sums. Both gzipped (`.vcf.gz`) and uncompressed (`.vcf`) inputs are accepted; output is always bgzipped. The normalised VCF is written to the corresponding `output/<genome>/` prefix in the same bucket. The same Terraform module is deployed across 7 AWS accounts. A single deployment can serve multiple reference genomes — each genome gets its own Lambda function and IAM role, all sharing one ECR repository.
 
 ## Project Structure
 
@@ -21,13 +21,16 @@ find . -type f \( -name '*.py' -o -name '*.tf' -o -name '*.sh' -o -name 'Dockerf
 ```
 
 ```bash
-ls terraform/*.tf
+ls terraform/*.tf terraform/modules/vcf_normaliser/*.tf
 ```
 
 ```output
 terraform/main.tf
 terraform/outputs.tf
 terraform/variables.tf
+terraform/modules/vcf_normaliser/main.tf
+terraform/modules/vcf_normaliser/outputs.tf
+terraform/modules/vcf_normaliser/variables.tf
 ```
 
 ## Lambda Handler
@@ -409,7 +412,19 @@ set -euo pipefail
 
 ## Infrastructure
 
-Terraform manages the ECR repository, Lambda function, IAM roles, and S3 event notification. Key variables allow per-account customisation (bucket names, genome reference path, memory/timeout settings).
+Terraform manages the ECR repository, Lambda functions, IAM roles, and S3 event notification. The configuration is split into a root module and a reusable child module.
+
+**Root module** (`terraform/`) owns resources that are shared across all genome configs or that must be defined once per bucket:
+- `aws_ecr_repository` / `aws_ecr_lifecycle_policy` — one shared image repository
+- `module.normaliser` (`for_each` over `genome_configs`) — one child module instance per genome
+- `aws_s3_bucket_notification` — a single resource with dynamic blocks (S3 only allows one notification resource per bucket)
+
+**Child module** (`terraform/modules/vcf_normaliser/`) owns the per-genome resources:
+- `aws_iam_role` + `aws_iam_role_policy_attachment` + `aws_iam_role_policy`
+- `aws_lambda_function`
+- `aws_lambda_permission`
+
+Key variables allow per-account customisation (bucket names, genome reference paths, memory/timeout settings).
 
 ```bash
 grep '^variable' terraform/variables.tf
@@ -418,15 +433,11 @@ grep '^variable' terraform/variables.tf
 ```output
 variable "project_name" {
 variable "input_bucket_name" {
-variable "input_prefix" {
-variable "output_prefix" {
-variable "genome_ref_bucket" {
-variable "genome_ref_key" {
+variable "genome_configs" {
 variable "lambda_memory_mb" {
 variable "lambda_timeout" {
 variable "lambda_ephemeral_storage_mb" {
 variable "ecr_image_tag" {
-variable "extra_s3_prefixes" {
 variable "tags" {
 ```
 
@@ -435,16 +446,10 @@ grep '^resource\|^data\|^module' terraform/main.tf
 ```
 
 ```output
-data "aws_caller_identity" "current" {}
-data "aws_region" "current" {}
+data "aws_s3_bucket" "input" {
 resource "aws_ecr_repository" "this" {
 resource "aws_ecr_lifecycle_policy" "this" {
-resource "aws_iam_role" "lambda" {
-resource "aws_iam_role_policy_attachment" "lambda_basic" {
-resource "aws_iam_role_policy" "lambda_s3" {
-data "aws_s3_bucket" "input" {
-resource "aws_lambda_function" "normalise" {
-resource "aws_lambda_permission" "s3" {
+module "normaliser" {
 resource "aws_s3_bucket_notification" "input" {
 ```
 
@@ -452,31 +457,35 @@ resource "aws_s3_bucket_notification" "input" {
 
 The pipeline accepts both gzipped (`.vcf.gz`) and uncompressed (`.vcf`) VCF files. Two changes enable this.
 
-**S3 trigger** — the Terraform notification resource registers two filter blocks, one per suffix, so uploads of either format fire the Lambda:
+**S3 trigger** — the Terraform notification resource uses `dynamic` blocks to generate one trigger per (genome config × file suffix) combination, so uploads of either format to any configured prefix fire the correct Lambda:
 
 ```bash
-grep -A 18 "aws_s3_bucket_notification" terraform/main.tf
+grep -A 22 "aws_s3_bucket_notification" terraform/main.tf
 ```
 
 ```output
 resource "aws_s3_bucket_notification" "input" {
   bucket = data.aws_s3_bucket.input.id
 
-  lambda_function {
-    lambda_function_arn = aws_lambda_function.normalise.arn
-    events              = ["s3:ObjectCreated:*"]
-    filter_prefix       = var.input_prefix
-    filter_suffix       = ".vcf.gz"
+  dynamic "lambda_function" {
+    for_each = {
+      for pair in flatten([
+        for cfg in var.genome_configs : [
+          { key = "${cfg.name}-vcfgz", name = cfg.name, prefix = cfg.input_prefix, suffix = ".vcf.gz" },
+          { key = "${cfg.name}-vcf",   name = cfg.name, prefix = cfg.input_prefix, suffix = ".vcf" },
+        ]
+      ]) : pair.key => pair
+    }
+
+    content {
+      lambda_function_arn = module.normaliser[lambda_function.value.name].lambda_function_arn
+      events              = ["s3:ObjectCreated:*"]
+      filter_prefix       = lambda_function.value.prefix
+      filter_suffix       = lambda_function.value.suffix
+    }
   }
 
-  lambda_function {
-    lambda_function_arn = aws_lambda_function.normalise.arn
-    events              = ["s3:ObjectCreated:*"]
-    filter_prefix       = var.input_prefix
-    filter_suffix       = ".vcf"
-  }
-
-  depends_on = [aws_lambda_permission.s3]
+  depends_on = [module.normaliser]
 }
 ```
 
