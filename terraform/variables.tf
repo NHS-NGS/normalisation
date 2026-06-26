@@ -57,6 +57,11 @@ variable "genome_configs" {
     condition     = alltrue([for cfg in var.genome_configs : cfg.input_prefix != cfg.output_prefix])
     error_message = "input_prefix and output_prefix must differ for each genome_config — identical prefixes would cause the Lambda to re-trigger on its own output."
   }
+
+  validation {
+    condition     = length(var.genome_configs) == length(distinct([for cfg in var.genome_configs : cfg.input_prefix]))
+    error_message = "Each genome_config input_prefix must be unique — duplicate prefixes would cause the same upload to be processed by multiple Lambdas."
+  }
 }
 
 variable "lambda_memory_mb" {
