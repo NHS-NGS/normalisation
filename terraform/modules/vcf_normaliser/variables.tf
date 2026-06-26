@@ -21,11 +21,21 @@ variable "input_bucket_arn" {
 variable "input_prefix" {
   description = "S3 key prefix this Lambda reads from (must end with /)"
   type        = string
+
+  validation {
+    condition     = can(regex("/$", var.input_prefix))
+    error_message = "input_prefix must end with a trailing slash."
+  }
 }
 
 variable "output_prefix" {
   description = "S3 key prefix this Lambda writes to (must end with /)"
   type        = string
+
+  validation {
+    condition     = can(regex("/$", var.output_prefix))
+    error_message = "output_prefix must end with a trailing slash."
+  }
 }
 
 variable "genome_ref_bucket" {
@@ -68,6 +78,16 @@ variable "extra_s3_prefixes" {
     write_prefix = string
   }))
   default = []
+
+  validation {
+    condition     = alltrue(flatten([for p in var.extra_s3_prefixes : [can(regex("/$", p.read_prefix)), can(regex("/$", p.write_prefix))]]))
+    error_message = "Each extra_s3_prefixes read_prefix and write_prefix must end with a trailing slash."
+  }
+
+  validation {
+    condition     = alltrue(flatten([for p in var.extra_s3_prefixes : [!can(regex("[*?]", p.read_prefix)), !can(regex("[*?]", p.write_prefix))]]))
+    error_message = "extra_s3_prefixes read_prefix and write_prefix must not contain IAM wildcard characters (* or ?)."
+  }
 }
 
 variable "tags" {

@@ -62,6 +62,55 @@ variable "genome_configs" {
     condition     = length(var.genome_configs) == length(distinct([for cfg in var.genome_configs : cfg.input_prefix]))
     error_message = "Each genome_config input_prefix must be unique — duplicate prefixes would cause the same upload to be processed by multiple Lambdas."
   }
+
+  validation {
+    condition     = length(var.genome_configs) == length(distinct([for cfg in var.genome_configs : cfg.output_prefix]))
+    error_message = "Each genome_config output_prefix must be unique — shared output prefixes allow genomes to overwrite each other's normalised files."
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for cfg in var.genome_configs : [
+        for other in var.genome_configs :
+        cfg.name == other.name || !startswith(other.input_prefix, cfg.input_prefix)
+      ]
+    ]))
+    error_message = "No input_prefix may be a leading prefix of another input_prefix — overlapping prefixes cause S3 notifications to fire on unintended uploads."
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for out_cfg in var.genome_configs : [
+        for in_cfg in var.genome_configs :
+        !startswith(out_cfg.output_prefix, in_cfg.input_prefix)
+      ]
+    ]))
+    error_message = "Each output_prefix must not start with any input_prefix — otherwise normalised files can re-trigger a normaliser."
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for cfg in var.genome_configs : [
+        for p in cfg.extra_s3_prefixes : [
+          can(regex("/$", p.read_prefix)),
+          can(regex("/$", p.write_prefix)),
+        ]
+      ]
+    ]))
+    error_message = "Each extra_s3_prefixes read_prefix and write_prefix must end with a trailing slash."
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for cfg in var.genome_configs : [
+        for p in cfg.extra_s3_prefixes : [
+          !can(regex("[*?]", p.read_prefix)),
+          !can(regex("[*?]", p.write_prefix)),
+        ]
+      ]
+    ]))
+    error_message = "extra_s3_prefixes read_prefix and write_prefix must not contain IAM wildcard characters (* or ?)."
+  }
 }
 
 variable "lambda_memory_mb" {

@@ -53,7 +53,7 @@ genome_configs = [
 ]
 ```
 
-Each entry creates a separate Lambda function named `<project_name>-<name>` (e.g. `vcf-normalisation-grch38`). The `name` field is a short identifier used in resource names — it can be any unique string (e.g. `grch38`, `hg19`, `grch37`).
+Each entry creates a separate Lambda function named `<project_name>-<name>` (e.g. `vcf-normalisation-grch38`). The `name` field is a short identifier used in resource names — it must be unique and contain only letters, numbers, hyphens, and underscores (e.g. `grch38`, `hg19`, `grch37`).
 
 The following index files must exist alongside each genome in the same bucket:
 
@@ -168,7 +168,7 @@ aws s3 cp s3://my-vcf-data/output/grch38/sample.vcf.gz normalised_sample.vcf.gz
 
 ### Manual — re-process a file
 
-Use the helper script to re-invoke a specific Lambda. The `FUNCTION_NAME` env var selects which genome's Lambda to use (defaults to `vcf-normalisation`):
+Use the helper script to re-invoke a specific Lambda. `FUNCTION_NAME` must be set to the deployed function name:
 
 ```bash
 FUNCTION_NAME=vcf-normalisation-grch38 ./scripts/invoke.sh my-vcf-data input/grch38/sample.vcf.gz
@@ -307,7 +307,7 @@ FUNCTION_NAME=vcf-normalisation-grch38 ./scripts/integration_test.sh <bucket> [i
 | `BUCKET` | Arg 1 | (required) |
 | `INPUT_PREFIX` | Arg 2 | `test/input/` |
 | `EXPECTED_PREFIX` | Arg 3 | `test/expected/` |
-| `FUNCTION_NAME` | Env var | `vcf-normalisation` |
+| `FUNCTION_NAME` | Env var | (required — no default) |
 | `MAX_PARALLEL` | Env var | `10` |
 | `POLL_TIMEOUT` | Env var | `120` (seconds per file) |
 | `REPORT_FILE` | Env var | `integration_report.md` |
