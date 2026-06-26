@@ -47,6 +47,16 @@ variable "genome_configs" {
     condition     = length(var.genome_configs) == length(distinct([for cfg in var.genome_configs : cfg.name]))
     error_message = "Each genome_config name must be unique."
   }
+
+  validation {
+    condition     = alltrue([for cfg in var.genome_configs : can(regex("^[a-zA-Z0-9_-]+$", cfg.name))])
+    error_message = "Each genome_config name must contain only letters, numbers, hyphens, and underscores (used in Lambda/IAM resource names)."
+  }
+
+  validation {
+    condition     = alltrue([for cfg in var.genome_configs : cfg.input_prefix != cfg.output_prefix])
+    error_message = "input_prefix and output_prefix must differ for each genome_config — identical prefixes would cause the Lambda to re-trigger on its own output."
+  }
 }
 
 variable "lambda_memory_mb" {

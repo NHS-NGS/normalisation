@@ -4,8 +4,13 @@ variable "project_name" {
 }
 
 variable "name" {
-  description = "Short identifier for this genome config, used as a suffix in resource names (e.g. 'grch38')"
+  description = "Short identifier for this genome config, used as a suffix in resource names (e.g. 'grch38'). Must contain only letters, numbers, hyphens, and underscores."
   type        = string
+
+  validation {
+    condition     = can(regex("^[a-zA-Z0-9_-]+$", var.name))
+    error_message = "name must contain only letters, numbers, hyphens, and underscores."
+  }
 }
 
 variable "input_bucket_arn" {
