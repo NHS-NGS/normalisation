@@ -29,7 +29,7 @@ fi
 BUCKET="$1"
 INPUT_PREFIX="${2:-test/input/}"
 EXPECTED_PREFIX="${3:-test/expected/}"
-FUNCTION_NAME="${FUNCTION_NAME:-vcf-normalisation}"
+FUNCTION_NAME="${FUNCTION_NAME:?FUNCTION_NAME must be set (e.g. vcf-normalisation-grch38)}"
 MAX_PARALLEL="${MAX_PARALLEL:-10}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-120}"
 REPORT_FILE="${REPORT_FILE:-integration_report.md}"

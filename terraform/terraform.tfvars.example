@@ -1,27 +1,30 @@
-# Account-specific configuration
-# Copy this file to terraform.tfvars and fill in the values.
-
 input_bucket_name = "my-vcf-data"
-genome_ref_bucket = "my-reference-genomes"
-genome_ref_key    = "genomes/hg38/Homo_sapiens.GRCh38.dna.toplevel.fa.gz"  # .fa or .fa.gz
 
-# Optional overrides
-# project_name              = "vcf-normalisation"
-# input_prefix              = "input/"
-# output_prefix             = "output/"
-# lambda_memory_mb          = 2048
-# lambda_timeout            = 600
+genome_configs = [
+  {
+    name              = "grch38"
+    input_prefix      = "input/grch38/"
+    output_prefix     = "output/grch38/"
+    genome_ref_bucket = "my-reference-genomes"
+    genome_ref_key    = "genomes/GRCh38/genome.fa.gz"
+  },
+  # Add a second entry here to enable a second genome, e.g.:
+  # {
+  #   name              = "grch37"
+  #   input_prefix      = "input/grch37/"
+  #   output_prefix     = "output/grch37/"
+  #   genome_ref_bucket = "my-reference-genomes"
+  #   genome_ref_key    = "genomes/GRCh37/genome.fa.gz"
+  # },
+]
+
+# Optional overrides (apply to all Lambda functions)
+# project_name                = "vcf-normalisation"
+# lambda_memory_mb            = 2048
+# lambda_timeout              = 600
 # lambda_ephemeral_storage_mb = 4096
-# ecr_image_tag             = "latest"
+# ecr_image_tag               = "latest"
 # tags = {
 #   Environment = "production"
 #   Team        = "genomics"
 # }
-
-# Grant Lambda access to additional S3 prefixes (e.g. for integration testing)
-# extra_s3_prefixes = [
-#   {
-#     read_prefix  = "test/input/"
-#     write_prefix = "test/output/"
-#   }
-# ]

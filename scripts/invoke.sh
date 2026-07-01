@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-FUNCTION_NAME="${FUNCTION_NAME:-vcf-normalisation}"
+FUNCTION_NAME="${FUNCTION_NAME:?FUNCTION_NAME must be set (e.g. vcf-normalisation-grch38)}"
 
 if [[ $# -ne 2 ]]; then
     echo "Usage: $0 <bucket> <key>" >&2
