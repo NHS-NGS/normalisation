@@ -28,3 +28,6 @@ eda_haemonc_v3_norm.py
 haemonc_v3_norm_eda.ipynb
 haemonc_v3_norm_eda.html
 vcf_normalisation_session_*.md
+
+# Memory
+memory/
