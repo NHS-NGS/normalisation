@@ -163,9 +163,9 @@ def _upload_output(bucket, input_key, output_path):
     """Upload the normalised VCF to S3, deriving the output key from OUTPUT_PREFIX
     and the input filename with a _norm suffix inserted before the extension.
 
-    Examples:
+    Examples (OUTPUT_PREFIX = 'output/grch38/'):
         input/grch38/sample.vcf.gz  ->  output/grch38/sample_norm.vcf.gz
-        input/hg19/sample.vcf       ->  output/hg19/sample_norm.vcf.gz
+        input/hg19/sample.vcf       ->  output/grch38/sample_norm.vcf.gz
     """
     filename = Path(input_key).name
 
