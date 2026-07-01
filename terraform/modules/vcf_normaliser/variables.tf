@@ -3,6 +3,17 @@ variable "project_name" {
   type        = string
 }
 
+variable "name_override" {
+  description = "Optional: use a fixed string as the full resource base name instead of <project_name>-<name>. Set this on an existing single-genome account to preserve current Lambda and IAM role names when migrating to the genome_configs structure."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.name_override == null || can(regex("^[a-zA-Z0-9_-]+$", var.name_override))
+    error_message = "name_override must contain only letters, numbers, hyphens, and underscores."
+  }
+}
+
 variable "name" {
   description = "Short identifier for this genome config, used as a suffix in resource names (e.g. 'grch38'). Must contain only letters, numbers, hyphens, and underscores."
   type        = string

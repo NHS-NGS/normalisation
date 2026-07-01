@@ -10,13 +10,33 @@ genome_configs = [
   },
   # Add a second entry here to enable a second genome, e.g.:
   # {
-  #   name              = "grch37"
-  #   input_prefix      = "input/grch37/"
-  #   output_prefix     = "output/grch37/"
+  #   name              = "hg19"
+  #   input_prefix      = "input/hg19/"
+  #   output_prefix     = "output/hg19/"
   #   genome_ref_bucket = "my-reference-genomes"
-  #   genome_ref_key    = "genomes/GRCh37/genome.fa.gz"
+  #   genome_ref_key    = "genomes/hg19/genome.fa.gz"
   # },
 ]
+
+# Migrating from a pre-multi-genome deployment? Use name_override on the
+# existing genome entry to preserve current Lambda and IAM role names:
+# genome_configs = [
+#   {
+#     name              = "grch38"
+#     name_override     = "vcf-normalisation"   # keeps existing resource names
+#     input_prefix      = "input/"
+#     output_prefix     = "output/"
+#     genome_ref_bucket = "my-reference-genomes"
+#     genome_ref_key    = "genomes/GRCh38/genome.fa.gz"
+#   },
+#   {
+#     name              = "hg19"
+#     input_prefix      = "input/hg19/"
+#     output_prefix     = "output/hg19/"
+#     genome_ref_bucket = "my-reference-genomes"
+#     genome_ref_key    = "genomes/hg19/genome.fa.gz"
+#   },
+# ]
 
 # Optional overrides (apply to all Lambda functions)
 # project_name                = "vcf-normalisation"

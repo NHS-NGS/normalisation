@@ -18,6 +18,7 @@ variable "genome_configs" {
   EOT
   type = list(object({
     name              = string # short id used in resource names, e.g. "grch38"
+    name_override     = optional(string, null) # preserve existing resource names when migrating
     input_prefix      = string # S3 prefix to watch for incoming VCFs (must end with /)
     output_prefix     = string # S3 prefix to write normalised VCFs (must end with /)
     genome_ref_bucket = string # S3 bucket containing the reference FASTA
@@ -51,6 +52,11 @@ variable "genome_configs" {
   validation {
     condition     = alltrue([for cfg in var.genome_configs : can(regex("^[a-zA-Z0-9_-]+$", cfg.name))])
     error_message = "Each genome_config name must contain only letters, numbers, hyphens, and underscores (used in Lambda/IAM resource names)."
+  }
+
+  validation {
+    condition     = alltrue([for cfg in var.genome_configs : cfg.name_override == null || can(regex("^[a-zA-Z0-9_-]+$", cfg.name_override))])
+    error_message = "Each genome_config name_override must contain only letters, numbers, hyphens, and underscores."
   }
 
   validation {

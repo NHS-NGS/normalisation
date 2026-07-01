@@ -125,9 +125,49 @@ terraform output -json lambda_function_names \
       --image-uri "$ECR_REPO:latest"
 ```
 
+#### Migrating existing state after upgrading to multi-genome support
+
+If your account was deployed **before** the multi-genome refactor (PR #13), the existing
+resources are at flat addresses (`aws_lambda_function.normalise`, etc.). The new config
+expects them under module paths. Run `terraform state mv` before `terraform apply` or
+Terraform will destroy and recreate the live Lambda.
+
+Substitute `<name>` with the genome name used in your `terraform.tfvars` (e.g. `grch38`):
+
+```bash
+cd terraform
+GENOME_NAME="grch38"  # match your genome_configs[].name
+
+terraform state mv \
+  aws_iam_role.lambda \
+  "module.normaliser[\"${GENOME_NAME}\"].aws_iam_role.lambda"
+
+terraform state mv \
+  aws_iam_role_policy_attachment.lambda_basic \
+  "module.normaliser[\"${GENOME_NAME}\"].aws_iam_role_policy_attachment.lambda_basic"
+
+terraform state mv \
+  aws_iam_role_policy.lambda_s3 \
+  "module.normaliser[\"${GENOME_NAME}\"].aws_iam_role_policy.lambda_s3"
+
+terraform state mv \
+  aws_lambda_function.normalise \
+  "module.normaliser[\"${GENOME_NAME}\"].aws_lambda_function.normalise"
+
+terraform state mv \
+  aws_lambda_permission.s3 \
+  "module.normaliser[\"${GENOME_NAME}\"].aws_lambda_permission.s3"
+```
+
+ECR and S3 notification remain at the root — no migration needed for those. After moving
+state, run `terraform plan` to confirm only in-place updates are shown (no destroys), then
+`terraform apply`.
+
 #### Updating from a different machine
 
-If you are running these steps on a machine that has no local Terraform state (e.g. a fresh clone), import the existing resources before applying. The resources are now keyed by genome name, so substitute `<name>` with your `genome_configs` entry name (e.g. `grch38`):
+If you are running these steps on a machine that has no local Terraform state (e.g. a fresh
+clone of an already-deployed account), import the existing resources before applying.
+Substitute `<name>` with your `genome_configs` entry name (e.g. `grch38`):
 
 ```bash
 cd terraform
@@ -137,7 +177,8 @@ terraform import 'module.normaliser["<name>"].aws_lambda_function.normalise' vcf
 terraform import 'module.normaliser["<name>"].aws_lambda_permission.s3' vcf-normalisation-<name>/AllowS3Invoke
 ```
 
-Replace `vcf-normalisation` with your `project_name` if you changed the default. After importing, run `terraform apply` as normal.
+Replace `vcf-normalisation` with your `project_name` if you changed the default. After
+importing, run `terraform apply` as normal.
 
 ### Tearing down
 
