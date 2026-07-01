@@ -63,6 +63,7 @@ module "normaliser" {
 
   project_name                = var.project_name
   name                        = each.value.name
+  name_override               = each.value.name_override
   input_bucket_arn            = data.aws_s3_bucket.input.arn
   input_prefix                = each.value.input_prefix
   output_prefix               = each.value.output_prefix
