@@ -160,23 +160,23 @@ def _run_bcftools_norm(input_path, genome_path):
 
 
 def _upload_output(bucket, input_key, output_path):
-    """Upload the normalised VCF to S3, deriving the output path from the input key.
+    """Upload the normalised VCF to S3, deriving the output key from OUTPUT_PREFIX
+    and the input filename with a _norm suffix inserted before the extension.
 
-    If the input key contains '/input/', the last occurrence is replaced with
-    '/output/' to mirror the directory structure. Otherwise falls back to
-    OUTPUT_PREFIX + filename.
+    Examples:
+        input/grch38/sample.vcf.gz  ->  output/grch38/sample_norm.vcf.gz
+        input/hg19/sample.vcf       ->  output/hg19/sample_norm.vcf.gz
     """
-    if "/input/" in input_key:
-        # Replace the last occurrence of /input/ with /output/
-        idx = input_key.rfind("/input/")
-        output_key = input_key[:idx] + "/output/" + input_key[idx + len("/input/"):]
-    else:
-        filename = Path(input_key).name
-        output_key = f"{OUTPUT_PREFIX}{filename}"
+    filename = Path(input_key).name
 
-    # Output is always bgzipped; fix the extension if the input was uncompressed
-    if output_key.endswith(".vcf"):
-        output_key = output_key[:-4] + ".vcf.gz"
+    if filename.endswith(".vcf.gz"):
+        output_filename = filename[:-7] + "_norm.vcf.gz"
+    elif filename.endswith(".vcf"):
+        output_filename = filename[:-4] + "_norm.vcf.gz"
+    else:
+        output_filename = filename
+
+    output_key = f"{OUTPUT_PREFIX}{output_filename}"
 
     logger.info("Uploading output: %s -> s3://%s/%s", output_path, bucket, output_key)
     s3.upload_file(str(output_path), bucket, output_key)
