@@ -41,7 +41,7 @@ def lambda_handler(event, context):
         input_path = _download_input(bucket, key)
         genome_path = _download_genome()
         output_path = _run_bcftools_norm(input_path, genome_path)
-        output_key = _upload_output(bucket, key, output_path)
+        output_key = _upload_output(bucket, output_path)
     finally:
         _cleanup()
 
@@ -124,9 +124,13 @@ def _run_bcftools_norm(input_path, genome_path):
     compressed or uncompressed.
     """
     output_name = input_path.name
-    if output_name.endswith(".vcf"):
-        output_name = output_name[:-4] + ".vcf.gz"
-    output_path = WORK_DIR / f"normalised_{output_name}"
+    # Input must be either .vcf or .vcf.gz, output always _norm.vcf.gz
+    if output_name.endswith(".vcf.gz"):
+        output_name = output_name[:-7] + "_norm.vcf.gz"
+    else:
+        # Not vcf.gz, therefore .vcf
+        output_name = output_name[:-4] + "_norm.vcf.gz"
+    output_path = WORK_DIR / f"{output_name}"
 
     cmd = [
         "bcftools",
@@ -159,24 +163,10 @@ def _run_bcftools_norm(input_path, genome_path):
     return output_path
 
 
-def _upload_output(bucket, input_key, output_path):
-    """Upload the normalised VCF to S3, deriving the output key from OUTPUT_PREFIX
-    and the input filename with a _norm suffix inserted before the extension.
-
-    Examples (OUTPUT_PREFIX = 'output/grch38/'):
-        input/grch38/sample.vcf.gz  ->  output/grch38/sample_norm.vcf.gz
-        input/hg19/sample.vcf       ->  output/grch38/sample_norm.vcf.gz
-    """
-    filename = Path(input_key).name
-
-    if filename.endswith(".vcf.gz"):
-        output_filename = filename[:-7] + "_norm.vcf.gz"
-    elif filename.endswith(".vcf"):
-        output_filename = filename[:-4] + "_norm.vcf.gz"
-    else:
-        output_filename = filename
-
-    output_key = f"{OUTPUT_PREFIX}{output_filename}"
+def _upload_output(bucket, output_path):
+    """Upload the normalised VCF to S3 using the configured output prefix"""
+    filename = Path(output_path).name
+    output_key = f"{OUTPUT_PREFIX}{filename}"
 
     logger.info("Uploading output: %s -> s3://%s/%s", output_path, bucket, output_key)
     s3.upload_file(str(output_path), bucket, output_key)
