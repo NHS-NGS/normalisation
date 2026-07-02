@@ -134,7 +134,7 @@ class TestBcftoolsNorm:
 
     @patch("handler.subprocess.run")
     def test_success_gzipped(self, mock_run, tmp_path):
-        """Gzipped input produces a .vcf.gz output path and -Oz is passed."""
+        """Gzipped input produces a _norm.vcf.gz output path and -Oz is passed."""
         input_path = tmp_path / "sample.vcf.gz"
         input_path.touch()
         genome_path = tmp_path / "genome.fa"
@@ -148,7 +148,7 @@ class TestBcftoolsNorm:
         with patch("handler.WORK_DIR", tmp_path):
             output = _run_bcftools_norm(input_path, genome_path)
 
-        assert output == tmp_path / "normalised_sample.vcf.gz"
+        assert output == tmp_path / "sample_norm.vcf.gz"
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "bcftools"
@@ -172,7 +172,7 @@ class TestBcftoolsNorm:
         with patch("handler.WORK_DIR", tmp_path):
             output = _run_bcftools_norm(input_path, genome_path)
 
-        assert output == tmp_path / "normalised_sample.vcf.gz"
+        assert output == tmp_path / "sample_norm.vcf.gz"
         cmd = mock_run.call_args[0][0]
         assert "-Oz" in cmd
 
@@ -200,37 +200,15 @@ class TestUploadOutput:
     """Tests for _upload_output S3 key derivation logic."""
 
     @patch("handler.s3")
-    def test_gzipped_input_gets_norm_suffix(self, mock_s3, tmp_path):
-        """sample.vcf.gz should produce sample_norm.vcf.gz under OUTPUT_PREFIX."""
-        output_path = tmp_path / "normalised_sample.vcf.gz"
+    def test_upload_output_key(self, mock_s3, tmp_path):
+        """Output key is derived from OUTPUT_PREFIX and output filename."""
+        output_path = tmp_path / "sample_norm.vcf.gz"
         output_path.touch()
 
-        key = _upload_output("my-bucket", "input/grch38/sample.vcf.gz", output_path)
-        assert key == "output/sample_norm.vcf.gz"
-        mock_s3.upload_file.assert_called_once_with(
-            str(output_path), "my-bucket", "output/sample_norm.vcf.gz"
-        )
+        with patch("handler.OUTPUT_PREFIX", "output/"):
+            result_key = _upload_output("my-bucket", output_path)
 
-    @patch("handler.s3")
-    def test_uncompressed_input_gets_norm_suffix_and_gz_extension(self, mock_s3, tmp_path):
-        """sample.vcf should produce sample_norm.vcf.gz under OUTPUT_PREFIX."""
-        output_path = tmp_path / "normalised_sample.vcf.gz"
-        output_path.touch()
-
-        key = _upload_output("my-bucket", "input/hg19/sample.vcf", output_path)
-        assert key == "output/sample_norm.vcf.gz"
-        mock_s3.upload_file.assert_called_once_with(
-            str(output_path), "my-bucket", "output/sample_norm.vcf.gz"
-        )
-
-    @patch("handler.s3")
-    def test_non_input_prefix_key(self, mock_s3, tmp_path):
-        """Keys not under input/ still get _norm suffix under OUTPUT_PREFIX."""
-        output_path = tmp_path / "normalised_sample.vcf.gz"
-        output_path.touch()
-
-        key = _upload_output("my-bucket", "uploads/sample.vcf.gz", output_path)
-        assert key == "output/sample_norm.vcf.gz"
+        assert result_key == "output/sample_norm.vcf.gz"
         mock_s3.upload_file.assert_called_once_with(
             str(output_path), "my-bucket", "output/sample_norm.vcf.gz"
         )
