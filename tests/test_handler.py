@@ -190,6 +190,17 @@ class TestBcftoolsNorm:
             with pytest.raises(RuntimeError, match="bcftools norm failed"):
                 _run_bcftools_norm(input_path, genome_path)
 
+    def test_unsupported_extension_raises(self, tmp_path):
+        """Input filenames that are neither .vcf nor .vcf.gz raise ValueError."""
+        input_path = tmp_path / "sample.txt"
+        input_path.touch()
+        genome_path = tmp_path / "genome.fa"
+        genome_path.touch()
+
+        with patch("handler.WORK_DIR", tmp_path):
+            with pytest.raises(ValueError, match="Unsupported input file extension"):
+                _run_bcftools_norm(input_path, genome_path)
+
 
 # ---------------------------------------------------------------------------
 # Upload output

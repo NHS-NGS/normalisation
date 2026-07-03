@@ -124,13 +124,13 @@ def _run_bcftools_norm(input_path, genome_path):
     compressed or uncompressed.
     """
     output_name = input_path.name
-    # Input must be either .vcf or .vcf.gz, output always _norm.vcf.gz
     if output_name.endswith(".vcf.gz"):
         output_name = output_name[:-7] + "_norm.vcf.gz"
-    else:
-        # Not vcf.gz, therefore .vcf
+    elif output_name.endswith(".vcf"):
         output_name = output_name[:-4] + "_norm.vcf.gz"
-    output_path = WORK_DIR / f"{output_name}"
+    else:
+        raise ValueError(f"Unsupported input file extension: {output_name}")
+    output_path = WORK_DIR / output_name
 
     cmd = [
         "bcftools",
