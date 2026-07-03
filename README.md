@@ -197,14 +197,14 @@ Upload a VCF to the genome-specific `input/` prefix in your bucket. Both gzipped
 aws s3 cp sample.vcf.gz s3://my-vcf-data/input/grch38/sample.vcf.gz
 ```
 
-The normalised file appears under the corresponding `output/` prefix. Output is always bgzipped (`.vcf.gz`), regardless of whether the input was compressed:
+The normalised file appears under the corresponding `output/` prefix with `_norm` inserted before the extension. Output is always bgzipped (`.vcf.gz`), regardless of whether the input was compressed:
 
 ```bash
 # Check it arrived
-aws s3 ls s3://my-vcf-data/output/grch38/sample.vcf.gz
+aws s3 ls s3://my-vcf-data/output/grch38/sample_norm.vcf.gz
 
 # Download it
-aws s3 cp s3://my-vcf-data/output/grch38/sample.vcf.gz normalised_sample.vcf.gz
+aws s3 cp s3://my-vcf-data/output/grch38/sample_norm.vcf.gz sample_norm.vcf.gz
 ```
 
 ### Manual — re-process a file
