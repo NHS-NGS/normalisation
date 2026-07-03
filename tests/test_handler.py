@@ -134,7 +134,7 @@ class TestBcftoolsNorm:
 
     @patch("handler.subprocess.run")
     def test_success_gzipped(self, mock_run, tmp_path):
-        """Gzipped input produces a .vcf.gz output path and -Oz is passed."""
+        """Gzipped input produces a _norm.vcf.gz output path and -Oz is passed."""
         input_path = tmp_path / "sample.vcf.gz"
         input_path.touch()
         genome_path = tmp_path / "genome.fa"
@@ -148,7 +148,7 @@ class TestBcftoolsNorm:
         with patch("handler.WORK_DIR", tmp_path):
             output = _run_bcftools_norm(input_path, genome_path)
 
-        assert output == tmp_path / "normalised_sample.vcf.gz"
+        assert output == tmp_path / "sample_norm.vcf.gz"
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "bcftools"
@@ -172,7 +172,7 @@ class TestBcftoolsNorm:
         with patch("handler.WORK_DIR", tmp_path):
             output = _run_bcftools_norm(input_path, genome_path)
 
-        assert output == tmp_path / "normalised_sample.vcf.gz"
+        assert output == tmp_path / "sample_norm.vcf.gz"
         cmd = mock_run.call_args[0][0]
         assert "-Oz" in cmd
 
@@ -190,6 +190,17 @@ class TestBcftoolsNorm:
             with pytest.raises(RuntimeError, match="bcftools norm failed"):
                 _run_bcftools_norm(input_path, genome_path)
 
+    def test_unsupported_extension_raises(self, tmp_path):
+        """Input filenames that are neither .vcf nor .vcf.gz raise ValueError."""
+        input_path = tmp_path / "sample.txt"
+        input_path.touch()
+        genome_path = tmp_path / "genome.fa"
+        genome_path.touch()
+
+        with patch("handler.WORK_DIR", tmp_path):
+            with pytest.raises(ValueError, match="Unsupported input file extension"):
+                _run_bcftools_norm(input_path, genome_path)
+
 
 # ---------------------------------------------------------------------------
 # Upload output
@@ -200,75 +211,17 @@ class TestUploadOutput:
     """Tests for _upload_output S3 key derivation logic."""
 
     @patch("handler.s3")
-    def test_standard_input_prefix(self, mock_s3, tmp_path):
-        """input/sample.vcf.gz should produce output/sample.vcf.gz."""
-        output_path = tmp_path / "normalised_sample.vcf.gz"
+    def test_upload_output_key(self, mock_s3, tmp_path):
+        """Output key is derived from OUTPUT_PREFIX and output filename."""
+        output_path = tmp_path / "sample_norm.vcf.gz"
         output_path.touch()
 
-        key = _upload_output("my-bucket", "input/sample.vcf.gz", output_path)
-        assert key == "output/sample.vcf.gz"
+        with patch("handler.OUTPUT_PREFIX", "output/"):
+            result_key = _upload_output("my-bucket", output_path)
+
+        assert result_key == "output/sample_norm.vcf.gz"
         mock_s3.upload_file.assert_called_once_with(
-            str(output_path), "my-bucket", "output/sample.vcf.gz"
-        )
-
-    @patch("handler.s3")
-    def test_nested_input_prefix(self, mock_s3, tmp_path):
-        """test/input/sample.vcf.gz should produce test/output/sample.vcf.gz."""
-        output_path = tmp_path / "normalised_sample.vcf.gz"
-        output_path.touch()
-
-        key = _upload_output("my-bucket", "test/input/sample.vcf.gz", output_path)
-        assert key == "test/output/sample.vcf.gz"
-        mock_s3.upload_file.assert_called_once_with(
-            str(output_path), "my-bucket", "test/output/sample.vcf.gz"
-        )
-
-    @patch("handler.s3")
-    def test_multiple_input_segments_replaces_last(self, mock_s3, tmp_path):
-        """When multiple /input/ segments exist, only the last is replaced."""
-        output_path = tmp_path / "normalised_sample.vcf.gz"
-        output_path.touch()
-
-        key = _upload_output("my-bucket", "input/subdir/input/sample.vcf.gz", output_path)
-        assert key == "input/subdir/output/sample.vcf.gz"
-        mock_s3.upload_file.assert_called_once_with(
-            str(output_path), "my-bucket", "input/subdir/output/sample.vcf.gz"
-        )
-
-    @patch("handler.s3")
-    def test_no_input_segment_uses_output_prefix(self, mock_s3, tmp_path):
-        """Keys without /input/ fall back to OUTPUT_PREFIX."""
-        output_path = tmp_path / "normalised_sample.vcf.gz"
-        output_path.touch()
-
-        key = _upload_output("my-bucket", "uploads/sample.vcf.gz", output_path)
-        assert key == "output/sample.vcf.gz"
-        mock_s3.upload_file.assert_called_once_with(
-            str(output_path), "my-bucket", "output/sample.vcf.gz"
-        )
-
-    @patch("handler.s3")
-    def test_uncompressed_input_key_becomes_gz(self, mock_s3, tmp_path):
-        """input/sample.vcf (uncompressed) should produce output/sample.vcf.gz."""
-        output_path = tmp_path / "normalised_sample.vcf.gz"
-        output_path.touch()
-
-        key = _upload_output("my-bucket", "input/sample.vcf", output_path)
-        assert key == "output/sample.vcf.gz"
-        mock_s3.upload_file.assert_called_once_with(
-            str(output_path), "my-bucket", "output/sample.vcf.gz"
-        )
-
-    @patch("handler.s3")
-    def test_uncompressed_no_input_segment_becomes_gz(self, mock_s3, tmp_path):
-        """Uncompressed key without /input/ should also get .vcf.gz extension."""
-        output_path = tmp_path / "normalised_sample.vcf.gz"
-        output_path.touch()
-
-        key = _upload_output("my-bucket", "uploads/sample.vcf", output_path)
-        assert key == "output/sample.vcf.gz"
-        mock_s3.upload_file.assert_called_once_with(
-            str(output_path), "my-bucket", "output/sample.vcf.gz"
+            str(output_path), "my-bucket", "output/sample_norm.vcf.gz"
         )
 
 
@@ -281,7 +234,7 @@ class TestLambdaHandler:
     """End-to-end handler tests with mocked dependencies."""
 
     @patch("handler._cleanup")
-    @patch("handler._upload_output", return_value="output/sample.vcf.gz")
+    @patch("handler._upload_output", return_value="output/sample_norm.vcf.gz")
     @patch("handler._run_bcftools_norm")
     @patch("handler._download_genome")
     @patch("handler._download_input")
@@ -302,7 +255,7 @@ class TestLambdaHandler:
         assert result["statusCode"] == 200
         body = json.loads(result["body"])
         assert body["input"] == "s3://my-bucket/input/sample.vcf.gz"
-        assert body["output"] == "s3://my-bucket/output/sample.vcf.gz"
+        assert body["output"] == "s3://my-bucket/output/sample_norm.vcf.gz"
 
         mock_setup.assert_called_once()
         mock_dl_input.assert_called_once_with("my-bucket", "input/sample.vcf.gz")

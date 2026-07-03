@@ -41,7 +41,7 @@ def lambda_handler(event, context):
         input_path = _download_input(bucket, key)
         genome_path = _download_genome()
         output_path = _run_bcftools_norm(input_path, genome_path)
-        output_key = _upload_output(bucket, key, output_path)
+        output_key = _upload_output(bucket, output_path)
     finally:
         _cleanup()
 
@@ -124,9 +124,13 @@ def _run_bcftools_norm(input_path, genome_path):
     compressed or uncompressed.
     """
     output_name = input_path.name
-    if output_name.endswith(".vcf"):
-        output_name = output_name[:-4] + ".vcf.gz"
-    output_path = WORK_DIR / f"normalised_{output_name}"
+    if output_name.endswith(".vcf.gz"):
+        output_name = output_name[:-7] + "_norm.vcf.gz"
+    elif output_name.endswith(".vcf"):
+        output_name = output_name[:-4] + "_norm.vcf.gz"
+    else:
+        raise ValueError(f"Unsupported input file extension: {output_name}")
+    output_path = WORK_DIR / output_name
 
     cmd = [
         "bcftools",
@@ -159,24 +163,10 @@ def _run_bcftools_norm(input_path, genome_path):
     return output_path
 
 
-def _upload_output(bucket, input_key, output_path):
-    """Upload the normalised VCF to S3, deriving the output path from the input key.
-
-    If the input key contains '/input/', the last occurrence is replaced with
-    '/output/' to mirror the directory structure. Otherwise falls back to
-    OUTPUT_PREFIX + filename.
-    """
-    if "/input/" in input_key:
-        # Replace the last occurrence of /input/ with /output/
-        idx = input_key.rfind("/input/")
-        output_key = input_key[:idx] + "/output/" + input_key[idx + len("/input/"):]
-    else:
-        filename = Path(input_key).name
-        output_key = f"{OUTPUT_PREFIX}{filename}"
-
-    # Output is always bgzipped; fix the extension if the input was uncompressed
-    if output_key.endswith(".vcf"):
-        output_key = output_key[:-4] + ".vcf.gz"
+def _upload_output(bucket, output_path):
+    """Upload the normalised VCF to S3 using the configured output prefix"""
+    filename = Path(output_path).name
+    output_key = f"{OUTPUT_PREFIX}{filename}"
 
     logger.info("Uploading output: %s -> s3://%s/%s", output_path, bucket, output_key)
     s3.upload_file(str(output_path), bucket, output_key)
