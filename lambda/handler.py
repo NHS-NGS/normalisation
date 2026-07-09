@@ -19,6 +19,7 @@ WORK_DIR = Path("/tmp/vcf_work")
 GENOME_REF_BUCKET = os.environ["GENOME_REF_BUCKET"]
 GENOME_REF_KEY = os.environ["GENOME_REF_KEY"]
 OUTPUT_PREFIX = os.environ.get("OUTPUT_PREFIX", "output/")
+GENOME_VCF_SUFFIXES = [".genome.vcf.gz", ".genome.vcf", ".g.vcf.gz", ".g.vcf"]
 
 
 def lambda_handler(event, context):
@@ -40,7 +41,11 @@ def lambda_handler(event, context):
     try:
         input_path = _download_input(bucket, key)
         genome_path = _download_genome()
-        output_path = _run_bcftools_norm(input_path, genome_path)
+        if any(input_path.name.endswith(suffix) for suffix in GENOME_VCF_SUFFIXES):
+            ref_removed_path = _remove_ref_ref_records(input_path=input_path)
+            output_path = _run_bcftools_norm(input_path=ref_removed_path, genome_path=genome_path)
+        else:
+            output_path = _run_bcftools_norm(input_path=input_path, genome_path=genome_path)
         output_key = _upload_output(bucket, output_path)
     finally:
         _cleanup()
@@ -117,19 +122,24 @@ def _download_genome():
     return genome_local
 
 
+def _resuffix_file(suffixes, input_name, replacement_suffix):
+    """Replace whichever suffix in `suffixes` matches `input_name` with `replacement_suffix`."""
+    for suffix in suffixes:
+        if input_name.endswith(suffix):
+            return input_name[: -len(suffix)] + replacement_suffix
+
+    raise ValueError(f"Unsupported input file extension: {input_name}")
+
+
 def _run_bcftools_norm(input_path, genome_path):
     """Run bcftools norm and return the path to the output file.
 
     Output is always bgzipped (.vcf.gz) regardless of whether the input was
     compressed or uncompressed.
     """
-    output_name = input_path.name
-    if output_name.endswith(".vcf.gz"):
-        output_name = output_name[:-7] + "_norm.vcf.gz"
-    elif output_name.endswith(".vcf"):
-        output_name = output_name[:-4] + "_norm.vcf.gz"
-    else:
-        raise ValueError(f"Unsupported input file extension: {output_name}")
+
+    input_name = input_path.name
+    output_name = _resuffix_file([".vcf.gz", ".vcf"], input_name, "_norm.vcf.gz")
     output_path = WORK_DIR / output_name
 
     cmd = [
@@ -160,6 +170,36 @@ def _run_bcftools_norm(input_path, genome_path):
             f"bcftools norm failed (exit {result.returncode}): {result.stderr}"
         )
 
+    return output_path
+
+
+def _remove_ref_ref_records(input_path):
+    """Strip ref/ref (single-allele) records from a gVCF via `bcftools view -m2`."""
+    input_name = input_path.name
+    output_name = _resuffix_file(GENOME_VCF_SUFFIXES, input_name, ".vcf.gz")
+    output_path = WORK_DIR / output_name
+    cmd = [
+        "bcftools",
+        "view",
+        "-m2",
+        str(input_path),
+        "-Oz",
+        "-o",
+        str(output_path),
+    ]
+
+    logger.info("Running: %s", " ".join(cmd))
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=540)
+
+    if result.stdout:
+        logger.info("bcftools stdout: %s", result.stdout)
+    if result.stderr:
+        logger.info("bcftools stderr: %s", result.stderr)
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Ref/ref removal via bcftools view failed (exit {result.returncode}): {result.stderr}"
+        )
     return output_path
 
 
