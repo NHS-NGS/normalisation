@@ -191,11 +191,20 @@ terraform destroy
 
 ### Automatic — upload a file
 
-Upload a VCF to the genome-specific `input/` prefix in your bucket. Both gzipped (`.vcf.gz`) and uncompressed (`.vcf`) inputs are accepted. The Lambda triggers automatically:
+Upload a VCF to the genome-specific `input/` prefix in your bucket. The Lambda triggers automatically:
 
 ```bash
 aws s3 cp sample.vcf.gz s3://my-vcf-data/input/grch38/sample.vcf.gz
 ```
+
+The following input formats are accepted:
+
+| Format | Extensions | Behaviour |
+|---|---|---|
+| Standard VCF | `.vcf.gz`, `.vcf` | Normalised directly |
+| gVCF | `.genome.vcf.gz`, `.genome.vcf`, `.g.vcf.gz`, `.g.vcf` | Ref/ref records stripped first, then normalised |
+
+For gVCF inputs, reference-only records are removed with `bcftools view -m2` before normalisation. This strips the coverage blocks that gVCF callers emit for non-variant sites, leaving only genuine variant records.
 
 The normalised file appears under the corresponding `output/` prefix with `_norm` inserted before the extension. Output is always bgzipped (`.vcf.gz`), regardless of whether the input was compressed:
 
