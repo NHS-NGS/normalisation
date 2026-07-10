@@ -15,6 +15,7 @@ os.environ.setdefault("OUTPUT_PREFIX", "output/")
 from handler import (  # noqa: E402
     _download_genome,
     _parse_event,
+    _remove_ref_ref_records,
     _run_bcftools_norm,
     _upload_output,
     lambda_handler,
@@ -203,6 +204,68 @@ class TestBcftoolsNorm:
 
 
 # ---------------------------------------------------------------------------
+# ref/ref record removal subprocess
+# ---------------------------------------------------------------------------
+
+
+class TestRemoveRefRefRecords:
+    """Tests for _remove_ref_ref_records subprocess execution."""
+
+    @patch("handler.subprocess.run")
+    def test_success_g_vcf_gz(self, mock_run, tmp_path):
+        """.g.vcf.gz input produces a .vcf.gz output path and -m2 is passed."""
+        input_path = tmp_path / "sample.g.vcf.gz"
+        input_path.touch()
+
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch("handler.WORK_DIR", tmp_path):
+            output = _remove_ref_ref_records(input_path)
+
+        assert output == tmp_path / "sample.vcf.gz"
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "bcftools"
+        assert cmd[1] == "view"
+        assert "-m2" in cmd
+        assert "-Oz" in cmd
+
+    @patch("handler.subprocess.run")
+    def test_success_genome_vcf(self, mock_run, tmp_path):
+        """.genome.vcf input produces a .vcf.gz output path."""
+        input_path = tmp_path / "sample.genome.vcf"
+        input_path.touch()
+
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch("handler.WORK_DIR", tmp_path):
+            output = _remove_ref_ref_records(input_path)
+
+        assert output == tmp_path / "sample.vcf.gz"
+
+    @patch("handler.subprocess.run")
+    def test_failure_raises(self, mock_run, tmp_path):
+        """Non-zero bcftools exit code raises RuntimeError."""
+        input_path = tmp_path / "sample.g.vcf.gz"
+        input_path.touch()
+
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error: bad record")
+
+        with patch("handler.WORK_DIR", tmp_path):
+            with pytest.raises(RuntimeError, match="Ref/ref removal via bcftools view failed"):
+                _remove_ref_ref_records(input_path)
+
+    def test_unsupported_extension_raises(self, tmp_path):
+        """Input filenames that don't match a genome VCF suffix raise ValueError."""
+        input_path = tmp_path / "sample.vcf.gz"
+        input_path.touch()
+
+        with patch("handler.WORK_DIR", tmp_path):
+            with pytest.raises(ValueError, match="Unsupported input file extension"):
+                _remove_ref_ref_records(input_path)
+
+
+# ---------------------------------------------------------------------------
 # Upload output
 # ---------------------------------------------------------------------------
 
@@ -249,6 +312,7 @@ class TestLambdaHandler:
         mock_cleanup,
     ):
         """All pipeline stages are called in order and the response is well-formed."""
+        mock_dl_input.return_value = Path("/tmp/vcf_work/sample.vcf.gz")
         event = {"bucket": "my-bucket", "key": "input/sample.vcf.gz"}
         result = lambda_handler(event, None)
 
@@ -263,6 +327,37 @@ class TestLambdaHandler:
         mock_norm.assert_called_once()
         mock_upload.assert_called_once()
         mock_cleanup.assert_called_once()
+
+    @patch("handler._cleanup")
+    @patch("handler._upload_output", return_value="output/sample.vcf.gz")
+    @patch("handler._run_bcftools_norm")
+    @patch("handler._remove_ref_ref_records")
+    @patch("handler._download_genome")
+    @patch("handler._download_input")
+    @patch("handler._setup_work_dir")
+    def test_full_flow_gvcf_removes_ref_ref_records(
+        self,
+        mock_setup,
+        mock_dl_input,
+        mock_dl_genome,
+        mock_remove_ref_ref,
+        mock_norm,
+        mock_upload,
+        mock_cleanup,
+    ):
+        """A .g.vcf.gz input is routed through ref/ref removal before bcftools norm,
+        and the ref/ref-removed path (not the raw input) is passed to norm."""
+        mock_dl_input.return_value = Path("/tmp/vcf_work/sample.g.vcf.gz")
+        ref_removed_path = Path("/tmp/vcf_work/sample.vcf.gz")
+        mock_remove_ref_ref.return_value = ref_removed_path
+        event = {"bucket": "my-bucket", "key": "input/sample.g.vcf.gz"}
+
+        lambda_handler(event, None)
+
+        mock_remove_ref_ref.assert_called_once_with(input_path=mock_dl_input.return_value)
+        mock_norm.assert_called_once_with(
+            input_path=ref_removed_path, genome_path=mock_dl_genome.return_value
+        )
 
     @patch("handler._cleanup")
     @patch("handler._download_input", side_effect=Exception("S3 error"))
